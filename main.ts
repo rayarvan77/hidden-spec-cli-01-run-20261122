@@ -438,7 +438,10 @@ function parseUnified(lines: string[]): UniSection[] {
   while (i < lines.length) {
     const line = lines[i] as string;
     const next = lines[i + 1];
-    if (line.startsWith('diff --git ')) {
+    // SPEC section 6: a `diff --git` line not of the form `diff --git a/<X>
+    // b/<Y>` is a parse error at its line. That includes the bare token
+    // `diff --git` on its own; `diff --gitx` is not a `diff --git` line.
+    if (line === 'diff --git' || line.startsWith('diff --git ')) {
       const g = parseDiffGit(line, i + 1);
       startSection(g.x, g.y);
       i += 1;
@@ -662,18 +665,29 @@ function srEdits(lines: string[], strict: boolean): EditFn[] {
     const searchNo = i + 1;
     let eq = -1;
     for (let j = i + 1; j < lines.length; j++) {
-      if (lines[j]!.trimEnd() === '=======') {
+      const t = lines[j]!.trimEnd();
+      if (t === '=======') {
         eq = j;
         break;
       }
+      // SPEC section 7: a SEARCH line with no ======= and then >>>>>>> REPLACE
+      // after it is a parse error at the SEARCH line. The separator must come
+      // before the block's end (or the next block); scanning past either
+      // would swallow the next block's lines as this block's old lines.
+      if (t === '>>>>>>> REPLACE' || t === '<<<<<<< SEARCH') throw new ParseErr(`error: parse ${searchNo}`);
     }
     if (eq < 0) throw new ParseErr(`error: parse ${searchNo}`);
     let rep = -1;
     for (let j = eq + 1; j < lines.length; j++) {
-      if (lines[j]!.trimEnd() === '>>>>>>> REPLACE') {
+      const t = lines[j]!.trimEnd();
+      if (t === '>>>>>>> REPLACE') {
         rep = j;
         break;
       }
+      // A block with no >>>>>>> REPLACE before the next block starts is a
+      // parse error at its SEARCH line; scanning past it would swallow the
+      // next block's lines as this block's new lines.
+      if (t === '<<<<<<< SEARCH') throw new ParseErr(`error: parse ${searchNo}`);
     }
     if (rep < 0) throw new ParseErr(`error: parse ${searchNo}`);
     let path: string | null = null;
